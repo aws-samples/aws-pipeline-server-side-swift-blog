@@ -1,0 +1,9 @@
+{
+  "name": "swift-pipeline",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "create": "CF_BUCKET=degibb-mb3-cf ./scripts/create-stack.sh",
+    "update": "CF_BUCKET=degibb-mb3-cf ./scripts/update-stack.sh"
+  }
+}

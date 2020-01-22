@@ -1,0 +1,347 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: VPC stack for Swift build stack
+Parameters:
+  ImageId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-06d51e91cea0dac8d
+
+Resources: 
+  WebAppVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-VPC"
+
+  WebAppVPCIGW:
+    Type: AWS::EC2::InternetGateway
+
+  WebAppVPCIGWAttach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref WebAppVPC
+      InternetGatewayId: !Ref WebAppVPCIGW
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref WebAppVPC
+      Tags:
+      - Key: Name
+        Value: Public Route Table
+
+  PublicEgressRoute:
+    Type: AWS::EC2::Route
+    Properties:
+       RouteTableId: !Ref PublicRouteTable
+       DestinationCidrBlock: 0.0.0.0/0
+       GatewayId: !Ref WebAppVPCIGW
+
+  WebAppPublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: WebAppVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ""
+      Tags:
+        - Key: Name
+          Value: Public Subnet A
+
+  WebAppPublicSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref WebAppPublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  WebAppPublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: WebAppVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: ""
+      Tags:
+        - Key: Name
+          Value: Public Subnet B
+
+  WebAppPublicSubnetBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref WebAppPublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  WebAppNAT:
+     Type: AWS::EC2::NatGateway
+     Properties:
+        AllocationId: !GetAtt WebAppNATEIP.AllocationId
+        SubnetId: !Ref WebAppPublicSubnetA
+
+  WebAppNATEIP:
+     DependsOn: WebAppVPCIGWAttach
+     Type: AWS::EC2::EIP
+     Properties:
+        Domain: vpc
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref WebAppVPC
+      Tags:
+      - Key: Name
+        Value: Private Route Table
+
+  PrivateEgressRoute:
+    Type: AWS::EC2::Route
+    Properties:
+       RouteTableId: !Ref PrivateRouteTable
+       DestinationCidrBlock: 0.0.0.0/0
+       NatGatewayId: !Ref WebAppNAT
+
+  WebAppPrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: WebAppVPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ""
+      Tags:
+        - Key: Name
+          Value: Private Subnet A
+
+  WebAppPrivateSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref WebAppPrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  WebAppPrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: WebAppVPC
+      CidrBlock: 10.0.4.0/24
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: ""
+      Tags:
+        - Key: Name
+          Value: Private Subnet B
+
+  WebAppPrivateSubnetBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref WebAppPrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  WebAppLaunchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [ec2.amazonaws.com]
+        Version: '2012-10-17'
+      Path: /
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-WebAppLaunch"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - 'ssmmessages:CreateControlChannel'
+                - 'ssmmessages:CreateDataChannel'
+                - 'ssmmessages:OpenControlChannel'
+                - 'ssmmessages:OpenDataChannel'
+                - 'ssm:UpdateInstanceInformation'
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                - 'cloudformation:DescribeStackResource'
+                - 'cloudformation:SignalResource'
+                Effect: Allow
+                Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*"
+              - Action:
+                - 'logs:CreateLogStream'
+                - 'logs:PutLogEvents'
+                - 'logs:DescribeLogGroups'
+                - 'logs:DescribeLogStreams'
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                - 's3:Get*'
+                - 's3:List*'
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                - 's3:GetEncryptionConfiguration'
+                Effect: Allow
+                Resource: '*'
+
+  WebAppLaunchProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      InstanceProfileName: !Sub "${AWS::StackName}-InstanceProfile"
+      Roles: 
+        - !Ref WebAppLaunchRole
+
+  WebAppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          files:
+            /etc/systemd/system/swiftapp.service:
+              content: |
+                [Unit]
+                Description=Swift demo service
+                After=network.target
+                StartLimitIntervalSec=0
+                [Service]
+                Type=simple
+                Restart=always
+                RestartSec=1
+                User=vapor
+                WorkingDirectory=/opt/app
+                ExecStart=/opt/app/Run --env production --hostname 0.0.0.0
+
+                [Install]
+                WantedBy=multi-user.target
+    Properties: 
+      LaunchTemplateName: !Sub ${AWS::StackName}-launch-template
+      LaunchTemplateData: 
+        CreditSpecification: 
+          CpuCredits: Unlimited
+        ImageId: !Ref ImageId
+        InstanceType: t3.small
+        Monitoring: 
+          Enabled: true
+        SecurityGroupIds: 
+          - !Ref WebAppSecurityGroup
+        IamInstanceProfile:
+          Arn: !GetAtt WebAppLaunchProfile.Arn
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            apt-get -y update
+            apt-get install -y python-pip awscli ruby libatomic1 clang pkg-config libicu-dev libpython2.7 libxml2-dev wget git libssl-dev uuid-dev libsqlite3-dev libpq-dev libmysqlclient-dev libbson-dev libmongoc-dev libcurl4-openssl-dev 
+            pip install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+            echo Setting up AWS Metadata...
+            /usr/local/bin/cfn-init -v --stack ${AWS::StackName} --resource WebAppLaunchTemplate --region ${AWS::Region}
+            systemctl daemon-reload
+            echo Installing Swift...
+            cd $(mktemp -d)
+            wget https://swift.org/builds/swift-5.1.2-release/ubuntu1804/swift-5.1.2-RELEASE/swift-5.1.2-RELEASE-ubuntu18.04.tar.gz
+            gunzip < swift-5.1.2-RELEASE-ubuntu18.04.tar.gz | tar -C / -xv --strip-components 1
+            useradd -r vapor
+            echo Installing CodeDeploy...
+            cd $(mktemp -d)
+            aws s3 cp s3://aws-codedeploy-${AWS::Region}/latest/install . --region ${AWS::Region}
+            chmod +x ./install
+            ./install auto
+            service codedeploy-agent start
+
+  WebAppASG: 
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-WebAppASG"
+      MinSize: 2
+      MaxSize: 3
+      DesiredCapacity: 2
+      HealthCheckGracePeriod: 300
+      TargetGroupARNs:
+        - !Ref EC2TargetGroup
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebAppLaunchTemplate
+        Version: !GetAtt WebAppLaunchTemplate.LatestVersionNumber
+      VPCZoneIdentifier:
+        - !Ref WebAppPrivateSubnetA
+        - !Ref WebAppPrivateSubnetB
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName}-WebApp"
+        PropagateAtLaunch: true
+
+  WebAppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: WebApp Instance Security Group
+      GroupDescription: 'WebApp SecurityGroup'
+      VpcId: !Ref WebAppVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: WebApp Load Balancer Security Group
+      GroupDescription: 'WebApp SecurityGroup'
+      VpcId: !Ref WebAppVPC
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+
+
+  EC2TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckEnabled: true
+      Name: SwiftEC2Targets
+      Protocol: HTTP
+      Port: 8080
+      VpcId: !Ref WebAppVPC
+
+  EC2LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets:
+        - !Ref WebAppPublicSubnetA
+        - !Ref WebAppPublicSubnetB
+
+  EC2LBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties: 
+      DefaultActions: 
+        - Type: forward
+          TargetGroupArn: !Ref EC2TargetGroup
+      LoadBalancerArn: !Ref EC2LoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+Outputs:
+  WebAppASG: 
+    Value: !Ref WebAppASG
+  PublicSubnetA: 
+    Value: !Ref WebAppPublicSubnetA
+  PublicSubnetB: 
+    Value: !Ref WebAppPublicSubnetB
+  PrivateSubnetA: 
+    Value: !Ref WebAppPrivateSubnetA
+  PrivateSubnetB: 
+    Value: !Ref WebAppPrivateSubnetB
+  VPC:
+    Value: !Ref WebAppVPC
+  Ec2LbUrl:
+    Value: !Sub "http://${EC2LoadBalancer.DNSName}/"

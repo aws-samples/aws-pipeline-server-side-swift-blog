@@ -1,0 +1,400 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create a pipeline for Swift assets
+Parameters:
+  WebAppASG:
+    Type: String
+  ECSCluster:
+    Type: String
+  ECSService:
+    Type: String
+
+Resources: 
+  ArtifactStoreS3Location:
+    Type: AWS::S3::Bucket
+
+  CodeRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Sub "${AWS::StackName}-Repo"
+      RepositoryDescription: Code Repo for Swift App
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [codepipeline.amazonaws.com]
+        Version: '2012-10-17'
+      Path: /
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-CodePipelineAccess"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - 'logs:*'
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                - 's3:*'
+                Effect: Allow
+                Resource: 
+                  - !GetAtt ArtifactStoreS3Location.Arn
+                  - !Sub "${ArtifactStoreS3Location.Arn}/*"
+              - Action:
+                - 'codecommit:GetBranch'
+                - 'codecommit:GetCommit'
+                - 'codecommit:UploadArchive'
+                - 'codecommit:GetUploadArchiveStatus'
+                Effect: Allow
+                Resource: 
+                  - !GetAtt CodeRepo.Arn
+              - Action:
+                - 'codebuild:BatchGetBuilds'
+                - 'codebuild:StartBuild'
+                Effect: Allow
+                Resource: 
+                  - !GetAtt TestBuildProject.Arn
+                  - !GetAtt CodeBuildProject.Arn
+                  - !GetAtt ContainerBuildProject.Arn
+              - Action:
+                - 'codedeploy:CreateDeployment'
+                - 'codedeploy:GetApplication'
+                - 'codedeploy:GetApplicationRevision'
+                - 'codedeploy:GetDeployment'
+                - 'codedeploy:GetDeploymentConfig'
+                - 'codedeploy:RegisterApplicationRevision'
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                - 'iam:PassRole'
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                - 'ecs:DescribeServices'
+                - 'ecs:UpdateService'
+                - 'ecs:RegisterTaskDefinition'
+                - 'ecs:DescribeTaskDefinition'
+                Effect: Allow
+                Resource: '*'
+
+  AppImage:
+    Type: AWS::ECR::Repository
+    Properties: 
+      RepositoryName: swift-app
+
+  CodePipeline: 
+    Type: AWS::CodePipeline::Pipeline 
+    Properties: 
+      Name: !Sub "${AWS::StackName}-pipeline"
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      Stages: 
+        - 
+          Name: Source 
+          Actions: 
+            - 
+              Name: SourceAction
+              ActionTypeId: 
+                Category: Source 
+                Owner: AWS 
+                Version: 1 
+                Provider: CodeCommit 
+              OutputArtifacts: 
+                - 
+                  Name: SourceOutput 
+              Configuration: 
+                RepositoryName: !GetAtt CodeRepo.Name
+                BranchName: master 
+              RunOrder: 1 
+        - 
+          Name: Test 
+          Actions: 
+            - 
+              Name: UnitTestAction 
+              InputArtifacts: 
+                -
+                  Name: SourceOutput 
+              ActionTypeId: 
+                Category: Build 
+                Owner: AWS 
+                Version: 1 
+                Provider: CodeBuild
+              Configuration: 
+                ProjectName: !Ref TestBuildProject
+        - 
+          Name: Build 
+          Actions: 
+            - 
+              Name: BuildBinaryAction 
+              InputArtifacts: 
+                -
+                  Name: SourceOutput 
+              OutputArtifacts: 
+                -
+                  Name: BinaryOutput 
+              ActionTypeId: 
+                Category: Build 
+                Owner: AWS 
+                Version: 1 
+                Provider: CodeBuild
+              Configuration: 
+                ProjectName: !Ref CodeBuildProject
+            - 
+              Name: BuildContainerAction 
+              InputArtifacts: 
+                -
+                  Name: SourceOutput 
+              OutputArtifacts: 
+                -
+                  Name: ECSOutput 
+              ActionTypeId: 
+                Category: Build 
+                Owner: AWS 
+                Version: 1 
+                Provider: CodeBuild
+              Configuration: 
+                ProjectName: !Ref ContainerBuildProject
+        - 
+          Name: Release 
+          Actions: 
+            - 
+              Name: EC2ReleaseAction
+              InputArtifacts: 
+                - 
+                  Name: BinaryOutput 
+              ActionTypeId: 
+                Category: Deploy 
+                Owner: AWS 
+                Version: 1
+                Provider: CodeDeploy 
+              Configuration: 
+                ApplicationName: 
+                  Ref: EC2Application
+                DeploymentGroupName: !Ref EC2DeploymentGroup
+              RunOrder: 1
+            - 
+              Name: ECSReleaseAction
+              InputArtifacts: 
+                - 
+                  Name: ECSOutput 
+              ActionTypeId: 
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: ECS 
+              Configuration: 
+                ClusterName: !Ref ECSCluster
+                ServiceName: !Ref ECSService
+              RunOrder: 1
+      ArtifactStore: 
+        Type: S3 
+        Location:
+          Ref: ArtifactStoreS3Location 
+
+  CodeBuildImage:
+    Type: AWS::ECR::Repository
+    Properties: 
+      RepositoryName: codebuild/swift
+
+  TestBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-TestBuild"
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        ImagePullCredentialsType: SERVICE_ROLE
+        Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/codebuild/swift:latest"
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: "buildspec.test.yml"
+      TimeoutInMinutes: 10
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-CodeBuild"
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        ImagePullCredentialsType: SERVICE_ROLE
+        Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/codebuild/swift:latest"
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: "buildspec.ec2.yml"
+      TimeoutInMinutes: 10
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [codebuild.amazonaws.com]
+        Version: '2012-10-17'
+      Path: /
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-CodeBuildAccess"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - 'logs:*'
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                - 'ecr:BatchCheckLayerAvailability'
+                - 'ecr:BatchGetImage'
+                - 'ecr:GetDownloadUrlForLayer'
+                - 'ecr:GetAuthorizationToken'
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                - 'logs:*'
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                - 's3:*'
+                Effect: Allow
+                Resource: 
+                  - !GetAtt ArtifactStoreS3Location.Arn
+                  - !Sub "${ArtifactStoreS3Location.Arn}/*"
+
+  ContainerBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-ContainerBuild"
+      ServiceRole: !GetAtt ContainerBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:2.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: IMAGE_REPO_NAME
+            Value: !Ref AppImage
+          - Name: IMAGE_TAG
+            Value: latest
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: "buildspec.docker.yml"
+      TimeoutInMinutes: 10
+
+  ContainerBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [codebuild.amazonaws.com]
+        Version: '2012-10-17'
+      Path: /
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-ContainerBuildAccess"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - 'logs:*'
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                - 'ecr:BatchCheckLayerAvailability'
+                - 'ecr:BatchGetImage'
+                - 'ecr:GetDownloadUrlForLayer'
+                - 'ecr:InitiateLayerUpload'
+                - 'ecr:CompleteLayerUpload'
+                - 'ecr:GetAuthorizationToken'
+                - 'ecr:PutImage'
+                - 'ecr:UploadLayerPart'
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                - 'logs:*'
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                - 's3:*'
+                Effect: Allow
+                Resource: 
+                  - !GetAtt ArtifactStoreS3Location.Arn
+                  - !Sub "${ArtifactStoreS3Location.Arn}/*"
+
+  EC2Application:
+    Type: AWS::CodeDeploy::Application
+
+  ECSApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ComputePlatform: ECS
+
+  DeploymentConfig:
+    Type: AWS::CodeDeploy::DeploymentConfig
+    Properties:
+      MinimumHealthyHosts:
+        Type: FLEET_PERCENT
+        Value: '25'
+
+  DeploymentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [codedeploy.amazonaws.com]
+        Version: '2012-10-17'
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole'
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-Deployment"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - 'ec2:RunInstances'
+                - 'ec2:CreateTags'
+                Effect: Allow
+                Resource: '*'
+
+  EC2DeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref EC2Application
+      DeploymentGroupName: !Sub "${AWS::StackName}-ec2-deployment-group"
+      ServiceRoleArn: !GetAtt DeploymentRole.Arn
+      AutoScalingGroups:
+        - !Ref WebAppASG
+      Ec2TagFilters:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-WebApp"
+          Type: KEY_AND_VALUE
+
+Outputs:
+  ArtifactStoreS3Location:
+    Value: !Ref ArtifactStoreS3Location
+  AppImage:
+    Value: !Ref AppImage
+  CodeBuildImage:
+    Value: !Ref CodeBuildImage

@@ -1,0 +1,188 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: ECS cluster for Swift deployment
+Parameters: 
+  VPC:
+    Type: String
+  Image:
+    Type: String
+  PublicSubnetA:
+    Type: String
+  PublicSubnetB:
+    Type: String
+  PrivateSubnetA:
+    Type: String
+  PrivateSubnetB:
+    Type: String
+  ECSDesiredCount:
+    Type: Number
+
+Resources: 
+  ECSTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckEnabled: true
+      Name: ECSTargets
+      Protocol: HTTP
+      Port: 8080
+      VpcId: !Ref VPC
+      TargetType: ip
+
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: Swift ECS Load Balancer Security Group
+      GroupDescription: 'WebApp SecurityGroup'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+
+  ECSLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+
+  ECSLBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties: 
+      DefaultActions: 
+        - Type: forward
+          TargetGroupArn: !Ref ECSTargetGroup
+      LoadBalancerArn: !Ref ECSLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ecs-tasks.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyName: AmazonECSTaskExecutionRolePolicy
+          PolicyDocument:
+            Statement:
+            - Effect: Allow
+              Action:
+                # Allow the ECS Tasks to download images from ECR
+                - 'ecr:GetAuthorizationToken'
+                - 'ecr:BatchCheckLayerAvailability'
+                - 'ecr:GetDownloadUrlForLayer'
+                - 'ecr:BatchGetImage'
+
+                # Allow the ECS tasks to upload logs to CloudWatch
+                - 'logs:CreateLogStream'
+                - 'logs:PutLogEvents'
+              Resource: '*'
+
+  TaskDefinition: 
+    Type: AWS::ECS::TaskDefinition
+    Properties: 
+      NetworkMode: awsvpc
+      Cpu: 512
+      Memory: 1024
+      RequiresCompatibilities:
+        - "FARGATE"
+      ExecutionRoleArn: !Ref ECSTaskExecutionRole
+      ContainerDefinitions: 
+        - 
+          Name: "swift-app"
+          Image: !Ref Image
+          Cpu: 512
+          Memory: 1024
+          Essential: true
+          PortMappings:
+            - 
+              ContainerPort: 80
+
+  ECSServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [ecs.amazonaws.com]
+        Version: '2012-10-17'
+      Path: /
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-ECSServiceRole"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - 'elasticloadbalancing:DeregisterInstancesFromLoadBalancer'
+                - 'elasticloadbalancing:DeregisterTargets'
+                - 'elasticloadbalancing:Describe*'
+                - 'elasticloadbalancing:RegisterInstancesWithLoadBalancer'
+                - 'elasticloadbalancing:RegisterTargets'
+                - 'ec2:Describe*'
+                - 'ec2:AuthorizeSecurityGroupIngress'
+                Effect: Allow
+                Resource: '*'
+
+  FargateContainerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access to the Fargate containers
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+
+  ECSSecurityGroupIngressFromSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from other containers in the same security group
+      GroupId: !Ref FargateContainerSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref FargateContainerSecurityGroup
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn:
+    - ECSLBListener
+    Properties:
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: !Ref ECSDesiredCount
+      LoadBalancers:
+      - TargetGroupArn:
+          Ref: ECSTargetGroup
+        ContainerPort: 80
+        ContainerName: swift-app
+      Cluster: !Ref Cluster
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 75
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref FargateContainerSecurityGroup
+          Subnets:
+            - !Ref PrivateSubnetA
+            - !Ref PrivateSubnetB
+
+Outputs:
+  Cluster:
+    Value: !Ref Cluster
+  Service:
+    Value: !Ref Service
+  EcsLbUrl:
+    Value: !Sub "http://${ECSLoadBalancer.DNSName}/"

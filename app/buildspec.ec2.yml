@@ -1,0 +1,16 @@
+version: 0.2
+
+phases:
+  build:
+    commands:
+      - swift build -c release
+      - tar -C .build/release/ -cvzf package.tar.gz .
+artifacts:
+  files:
+    - 'package.tar.gz'
+    - 'appspec.yml'
+    - 'scripts/*'
+cache:
+  paths:
+    - '.build/**/*'
+

@@ -1,0 +1,18 @@
+{
+    "StackName": "swift-build",
+    "Capabilities": [
+        "CAPABILITY_NAMED_IAM"
+    ],
+    "Parameters": [
+        {
+            "ParameterKey": "ECSDesiredCount",
+            "ParameterValue": "0"
+        }
+    ],
+    "Tags": [
+        {
+            "Key": "Project",
+            "Value": "swift-build"
+        }
+    ]
+}
