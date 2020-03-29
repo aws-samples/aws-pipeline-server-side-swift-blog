@@ -1,6 +1,6 @@
 ## Server-side Swift development using an AWS CI/CD pipeline
 
-This project is the accompanying source code to the blog article locate here: TBD. Please check that article out - it goes over the project goals and setup instructions in much greater depth.
+This project is the accompanying source code to the blog article locate here: https://aws.amazon.com/blogs/opensource/continuous-delivery-server-side-swift-aws/. Please check that article out - it goes over the project goals and setup instructions in much greater depth.
 
 ## Getting started
 
