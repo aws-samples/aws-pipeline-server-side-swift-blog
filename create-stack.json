@@ -5,8 +5,8 @@
     ],
     "Parameters": [
         {
-            "ParameterKey": "ECSDesiredCount",
-            "ParameterValue": "0"
+            "ParameterKey": "SwiftToolchainUrl",
+            "ParameterValue": "https://swift.org/builds/development/amazonlinux2/swift-DEVELOPMENT-SNAPSHOT-2020-05-11-a/swift-DEVELOPMENT-SNAPSHOT-2020-05-11-a-amazonlinux2.tar.gz"
         }
     ],
     "Tags": [
