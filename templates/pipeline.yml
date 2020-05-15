@@ -3,10 +3,6 @@ Description: Create a pipeline for Swift assets
 Parameters:
   WebAppASG:
     Type: String
-  ECSCluster:
-    Type: String
-  ECSService:
-    Type: String
 
 Resources: 
   ArtifactStoreS3Location:
@@ -59,7 +55,6 @@ Resources:
                 Resource: 
                   - !GetAtt TestBuildProject.Arn
                   - !GetAtt CodeBuildProject.Arn
-                  - !GetAtt ContainerBuildProject.Arn
               - Action:
                 - 'codedeploy:CreateDeployment'
                 - 'codedeploy:GetApplication'
@@ -73,18 +68,6 @@ Resources:
                 - 'iam:PassRole'
                 Effect: Allow
                 Resource: '*'
-              - Action:
-                - 'ecs:DescribeServices'
-                - 'ecs:UpdateService'
-                - 'ecs:RegisterTaskDefinition'
-                - 'ecs:DescribeTaskDefinition'
-                Effect: Allow
-                Resource: '*'
-
-  AppImage:
-    Type: AWS::ECR::Repository
-    Properties: 
-      RepositoryName: swift-app
 
   CodePipeline: 
     Type: AWS::CodePipeline::Pipeline 
@@ -100,7 +83,7 @@ Resources:
               ActionTypeId: 
                 Category: Source 
                 Owner: AWS 
-                Version: 1 
+                Version: "1" 
                 Provider: CodeCommit 
               OutputArtifacts: 
                 - 
@@ -120,7 +103,7 @@ Resources:
               ActionTypeId: 
                 Category: Build 
                 Owner: AWS 
-                Version: 1 
+                Version: "1" 
                 Provider: CodeBuild
               Configuration: 
                 ProjectName: !Ref TestBuildProject
@@ -138,25 +121,10 @@ Resources:
               ActionTypeId: 
                 Category: Build 
                 Owner: AWS 
-                Version: 1 
+                Version: "1" 
                 Provider: CodeBuild
               Configuration: 
                 ProjectName: !Ref CodeBuildProject
-            - 
-              Name: BuildContainerAction 
-              InputArtifacts: 
-                -
-                  Name: SourceOutput 
-              OutputArtifacts: 
-                -
-                  Name: ECSOutput 
-              ActionTypeId: 
-                Category: Build 
-                Owner: AWS 
-                Version: 1 
-                Provider: CodeBuild
-              Configuration: 
-                ProjectName: !Ref ContainerBuildProject
         - 
           Name: Release 
           Actions: 
@@ -168,26 +136,12 @@ Resources:
               ActionTypeId: 
                 Category: Deploy 
                 Owner: AWS 
-                Version: 1
+                Version: "1"
                 Provider: CodeDeploy 
               Configuration: 
                 ApplicationName: 
                   Ref: EC2Application
                 DeploymentGroupName: !Ref EC2DeploymentGroup
-              RunOrder: 1
-            - 
-              Name: ECSReleaseAction
-              InputArtifacts: 
-                - 
-                  Name: ECSOutput 
-              ActionTypeId: 
-                Category: Deploy
-                Owner: AWS
-                Version: 1
-                Provider: ECS 
-              Configuration: 
-                ClusterName: !Ref ECSCluster
-                ServiceName: !Ref ECSService
               RunOrder: 1
       ArtifactStore: 
         Type: S3 
@@ -271,88 +225,8 @@ Resources:
                   - !GetAtt ArtifactStoreS3Location.Arn
                   - !Sub "${ArtifactStoreS3Location.Arn}/*"
 
-  ContainerBuildProject:
-    Type: AWS::CodeBuild::Project
-    Properties:
-      Name: !Sub "${AWS::StackName}-ContainerBuild"
-      ServiceRole: !GetAtt ContainerBuildRole.Arn
-      Artifacts:
-        Type: CODEPIPELINE
-      Environment:
-        Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_SMALL
-        Image: aws/codebuild/standard:2.0
-        PrivilegedMode: true
-        EnvironmentVariables:
-          - Name: AWS_DEFAULT_REGION
-            Value: !Ref AWS::Region
-          - Name: AWS_ACCOUNT_ID
-            Value: !Ref AWS::AccountId
-          - Name: IMAGE_REPO_NAME
-            Value: !Ref AppImage
-          - Name: IMAGE_TAG
-            Value: latest
-      Source:
-        Type: CODEPIPELINE
-        BuildSpec: "buildspec.docker.yml"
-      TimeoutInMinutes: 10
-
-  ContainerBuildRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Statement:
-        - Action: ['sts:AssumeRole']
-          Effect: Allow
-          Principal:
-            Service: [codebuild.amazonaws.com]
-        Version: '2012-10-17'
-      Path: /
-      Policies:
-        - PolicyName: !Sub "${AWS::StackName}-ContainerBuildAccess"
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Action:
-                - 'logs:*'
-                Effect: Allow
-                Resource: '*'
-              - Action:
-                - 'ecr:BatchCheckLayerAvailability'
-                - 'ecr:BatchGetImage'
-                - 'ecr:GetDownloadUrlForLayer'
-                - 'ecr:InitiateLayerUpload'
-                - 'ecr:CompleteLayerUpload'
-                - 'ecr:GetAuthorizationToken'
-                - 'ecr:PutImage'
-                - 'ecr:UploadLayerPart'
-                Effect: Allow
-                Resource: '*'
-              - Action:
-                - 'logs:*'
-                Effect: Allow
-                Resource: '*'
-              - Action:
-                - 's3:*'
-                Effect: Allow
-                Resource: 
-                  - !GetAtt ArtifactStoreS3Location.Arn
-                  - !Sub "${ArtifactStoreS3Location.Arn}/*"
-
   EC2Application:
     Type: AWS::CodeDeploy::Application
-
-  ECSApplication:
-    Type: AWS::CodeDeploy::Application
-    Properties:
-      ComputePlatform: ECS
-
-  DeploymentConfig:
-    Type: AWS::CodeDeploy::DeploymentConfig
-    Properties:
-      MinimumHealthyHosts:
-        Type: FLEET_PERCENT
-        Value: '25'
 
   DeploymentRole:
     Type: AWS::IAM::Role
@@ -394,7 +268,5 @@ Resources:
 Outputs:
   ArtifactStoreS3Location:
     Value: !Ref ArtifactStoreS3Location
-  AppImage:
-    Value: !Ref AppImage
   CodeBuildImage:
     Value: !Ref CodeBuildImage

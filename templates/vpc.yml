@@ -4,14 +4,16 @@ Parameters:
   ImageId:
     Type: AWS::EC2::Image::Id
     Default: ami-06d51e91cea0dac8d
+  SwiftToolchainUrl:
+    Type: String
 
 Resources: 
   WebAppVPC:
     Type: AWS::EC2::VPC
     Properties:
       CidrBlock: 10.0.0.0/16
-      EnableDnsSupport: 'true'
-      EnableDnsHostnames: 'true'
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-VPC"
@@ -218,7 +220,7 @@ Resources:
                 RestartSec=1
                 User=vapor
                 WorkingDirectory=/opt/app
-                ExecStart=/opt/app/Run --env production --hostname 0.0.0.0
+                ExecStart=/opt/app/Run serve --env production --hostname 0.0.0.0
 
                 [Install]
                 WantedBy=multi-user.target
@@ -226,7 +228,7 @@ Resources:
       LaunchTemplateName: !Sub ${AWS::StackName}-launch-template
       LaunchTemplateData: 
         CreditSpecification: 
-          CpuCredits: Unlimited
+          CpuCredits: unlimited
         ImageId: !Ref ImageId
         InstanceType: t3.small
         Monitoring: 
@@ -238,16 +240,14 @@ Resources:
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash -xe
-            apt-get -y update
-            apt-get install -y python-pip awscli ruby libatomic1 clang pkg-config libicu-dev libpython2.7 libxml2-dev wget git libssl-dev uuid-dev libsqlite3-dev libpq-dev libmysqlclient-dev libbson-dev libmongoc-dev libcurl4-openssl-dev 
-            pip install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+            yum install ruby binutils gcc git glibc-static gzip libbsd libcurl libedit libicu libsqlite libstdc++-static libuuid libxml2 tar tzdata ruby -y
             echo Setting up AWS Metadata...
-            /usr/local/bin/cfn-init -v --stack ${AWS::StackName} --resource WebAppLaunchTemplate --region ${AWS::Region}
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource WebAppLaunchTemplate --region ${AWS::Region}
             systemctl daemon-reload
             echo Installing Swift...
             cd $(mktemp -d)
-            wget https://swift.org/builds/swift-5.1.2-release/ubuntu1804/swift-5.1.2-RELEASE/swift-5.1.2-RELEASE-ubuntu18.04.tar.gz
-            gunzip < swift-5.1.2-RELEASE-ubuntu18.04.tar.gz | tar -C / -xv --strip-components 1
+            wget ${SwiftToolchainUrl} -O swift.tar.gz
+            gunzip < swift.tar.gz | tar -C / -xv --strip-components 1
             useradd -r vapor
             echo Installing CodeDeploy...
             cd $(mktemp -d)
