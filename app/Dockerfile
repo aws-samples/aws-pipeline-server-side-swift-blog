@@ -1,27 +1,45 @@
-# You can set the Swift version to what you need for your app. Versions can be found here: https://hub.docker.com/_/swift
-FROM swift:5.1.1 as builder
+# ================================
+# Build image
+# ================================
+FROM swift:5.2-bionic as build
+WORKDIR /build
 
-RUN apt-get -qq update && apt-get install -y \
-  libssl-dev zlib1g-dev \
-  && rm -r /var/lib/apt/lists/*
-WORKDIR /app
+# Install sqlite3
+RUN apt-get update -y \
+	&& apt-get install -y libsqlite3-dev \
+	&& rm -rf /var/lib/apt/lists/*
+
+# First just resolve dependencies.
+# This creates a cached layer that can be reused
+# as long as your Package.swift/Package.resolved
+# files do not change.
+COPY ./Package.* ./
+RUN swift package resolve
+
+# Copy entire repo into container
 COPY . .
-RUN mkdir -p /build/lib && cp -R /usr/lib/swift/linux/*.so* /build/lib
-RUN swift build -c release && mv `swift build -c release --show-bin-path` /build/bin
 
-# Production image
-FROM ubuntu:18.04
-# DEBIAN_FRONTEND=noninteractive for automatic UTC configuration in tzdata
-RUN apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get install -y \ 
-  libatomic1 libicu60 libxml2 libcurl4 libz-dev libbsd0 tzdata \
-  && rm -r /var/lib/apt/lists/*
+# Compile with optimizations
+RUN swift build --enable-test-discovery -c release
+
+# ================================
+# Run image
+# ================================
+FROM swift:5.2-bionic-slim
+
+# Create a vapor user and group with /app as its home directory
+RUN useradd --user-group --create-home --home-dir /app vapor
+
 WORKDIR /app
-COPY --from=builder /build/bin/Run .
-COPY --from=builder /build/lib/* /usr/lib/
-# Uncomment the next line if you need to load resources from the `Public` directory
-#COPY --from=builder /app/Public ./Public
-# Uncomment the next line if you are using Leaf
-#COPY --from=builder /app/Resources ./Resources
-EXPOSE 80
 
-ENTRYPOINT ./Run serve --env production --hostname 0.0.0.0 --port 80
+# Copy build artifacts
+COPY --from=build --chown=vapor:vapor /build/.build/release /app
+# Uncomment the next line if you need to load resources from the `Public` directory
+#COPY --from=build --chown=vapor:vapor /build/Public /app/Public
+
+# Ensure all further commands run as the vapor user
+USER vapor
+
+# Start the Vapor service when the image is run, default to listening on 8080 in production environment 
+ENTRYPOINT ["./Run"]
+CMD ["serve", "--env", "production", "--hostname", "0.0.0.0", "--port", "8080"]
