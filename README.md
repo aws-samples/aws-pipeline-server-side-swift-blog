@@ -1,6 +1,6 @@
-## Server-side Swift development using an AWS CI/CD pipeline
+## Server-side Swift development for Amazon Linux 2 using an AWS CI/CD pipeline
 
-This project is the accompanying source code to the blog article locate here: https://aws.amazon.com/blogs/opensource/continuous-delivery-server-side-swift-aws/. Please check that article out - it goes over the project goals and setup instructions in much greater depth.
+This project is the accompanying source code to the blog article locate here: https://aws.amazon.com/blogs/opensource/continuous-delivery-with-server-side-swift-on-amazon-linux-2/. Please check that article out - it goes over the project goals and setup instructions in much greater depth.
 
 ## Getting started
 
@@ -15,9 +15,8 @@ This project is the accompanying source code to the blog article locate here: ht
  9. Navigate to the `CodeCommit` AWS console, then locate the repository created by the Cloudformation script (it should start with the stack name that you used). Click on that repository and follow the instructions to initialize the repository with the contents of `swift-codebuild-app`.
  10. Navigate to CodePipeline. Click on the pipeline whose name starts with the Cloudformation stack name. After a few seconds it should pick up the change in the CodeCommit repository and launch. After 10-15 minutes it should complete all three stages: Source, Build, and Release.
  11. Navigate to the EC2 AWS console, then click on the sidebar to find the `Load Balancer` section. First click on the load balancer whose name starts with `swift-EC2`. Copy the DNS name and paste it into a browser window. Confirm that it reponds with "It works!"
- 12. Navigate to the EC2 AWS console, then click on the sidebar to find the `Load Balancer` section. First click on the load balancer whose name starts with `swift-ECS`. Copy the DNS name and paste it into a browser window. Confirm that it reponds with "It works!"
- 13. Update the `swift-codebuild-app` repository. Edit `Sources/App/routes.swift` and modify `return "It works!"` to read `return "It works! With an update!"`. Commit those changes and push them to the CodeCommit repository.
- 14. Wait for the pipeline to update and confirm that the two load balancers update with the correct message.
+ 12. Update the `swift-codebuild-app` repository. Edit `Sources/App/routes.swift` and modify `return "It works!"` to read `return "It works! With an update!"`. Commit those changes and push them to the CodeCommit repository.
+ 13. Wait for the pipeline to update and confirm that the two load balancers update with the correct message.
 
  ## License
 
